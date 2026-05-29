@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Arboretum Trails">
+<title>Jacksonville Arboretum Trails</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1f1a;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+    overflow: hidden;
+    height: 100dvh;
+    width: 100vw;
+    touch-action: none;
+  }
+  #map-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    cursor: grab;
+  }
+  #map-container.dragging { cursor: grabbing; }
+  #map-wrapper {
+    position: absolute;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  #trail-map {
+    display: block;
+    user-select: none;
+    -webkit-user-drag: none;
+    pointer-events: none;
+  }
+  #gps-layer {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+
+  /* Landmark pins on the map */
+  .landmark-pin {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    pointer-events: all;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .landmark-bubble {
+    background: white;
+    border-radius: 20px;
+    padding: 4px 9px;
+    font-size: 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+  }
+  .landmark-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #1a1a1a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 110px;
+  }
+  .landmark-tail {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid white;
+    margin-top: -1px;
+    filter: drop-shadow(0 2px 2px rgba(0,0,0,0.2));
+  }
+
+  /* UI overlay */
+  #ui-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  #top-bar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: max(env(safe-area-inset-top), 12px) 16px 12px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%);
+    pointer-events: none;
+  }
+  #top-bar h1 { color: white; font-size: 17px; font-weight: 600; letter-spacing: -0.3px; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+  #top-bar p  { color: rgba(255,255,255,0.75); font-size: 12px; margin-top: 2px; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+
+  #status-pill {
+    position: absolute;
+    top: max(env(safe-area-inset-top), 12px);
+    right: 16px;
+    margin-top: 28px;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: white;
+    font-size: 11px;
+    padding: 5px 10px;
+    border-radius: 20px;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    border: 0.5px solid rgba(255,255,255,0.2);
+  }
+  #status-dot { width: 7px; height: 7px; border-radius: 50%; background: #888; flex-shrink: 0; }
+  #status-dot.searching { background: #f59e0b; animation: blink 1.2s ease-in-out infinite; }
+  #status-dot.found     { background: #34d399; }
+  #status-dot.error     { background: #f87171; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  #offmap-banner {
+    position: absolute;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(245,158,11,0.9);
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 20px;
+    white-space: nowrap;
+    pointer-events: none;
+    display: none;
+    backdrop-filter: blur(8px);
+  }
+  #offmap-banner.visible { display: block; }
+
+  #bottom-controls {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 16px 16px max(env(safe-area-inset-bottom), 16px);
+    background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 100%);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    pointer-events: none;
+  }
+  .ctrl-btn {
+    width: 48px; height: 48px;
+    background: rgba(255,255,255,0.15);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 0.5px solid rgba(255,255,255,0.25);
+    border-radius: 14px;
+    color: white;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: all;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ctrl-btn:active { background: rgba(255,255,255,0.28); transform: scale(0.94); }
+  #btn-locate {
+    width: 56px; height: 56px;
+    background: #4285f4;
+    border: none;
+    border-radius: 16px;
+    font-size: 22px;
+    box-shadow: 0 4px 16px rgba(66,133,244,0.5);
+  }
+  #btn-locate:active { background: #3367d6; transform: scale(0.94); }
+  #btn-locate.locating { background: #34d399; }
+  #btn-add-landmark {
+    background: rgba(52,211,153,0.25);
+    border-color: rgba(52,211,153,0.5);
+    font-size: 22px;
+  }
+  #btn-add-landmark.active {
+    background: rgba(52,211,153,0.5);
+    border-color: #34d399;
+    transform: scale(1.05);
+  }
+  .zoom-group { display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── SHEETS (modals) ────────────────────────────────────────────── */
+  .sheet-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: flex-end;
+    pointer-events: all;
+    opacity: 0;
+    transition: opacity 0.22s;
+  }
+  .sheet-backdrop.open { opacity: 1; }
+
+  .sheet {
+    width: 100%;
+    background: #1c2220;
+    border-radius: 20px 20px 0 0;
+    border-top: 0.5px solid rgba(255,255,255,0.12);
+    padding: 12px 20px max(env(safe-area-inset-bottom), 24px);
+    transform: translateY(100%);
+    transition: transform 0.28s cubic-bezier(0.32,0.72,0,1);
+    max-height: 85dvh;
+    overflow-y: auto;
+  }
+  .sheet-backdrop.open .sheet { transform: translateY(0); }
+
+  .sheet-handle {
+    width: 36px; height: 4px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    margin: 0 auto 16px;
+  }
+  .sheet-title {
+    font-size: 17px;
+    font-weight: 600;
+    color: white;
+    margin-bottom: 4px;
+  }
+  .sheet-sub {
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 20px;
+  }
+
+  /* Emoji picker */
+  .emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 6px;
+    margin-bottom: 20px;
+  }
+  .emoji-btn {
+    aspect-ratio: 1;
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .emoji-btn:active { background: rgba(255,255,255,0.2); }
+  .emoji-btn.selected { border-color: #34d399; background: rgba(52,211,153,0.15); }
+
+  .sheet-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.4);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 8px;
+  }
+  .sheet-input {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    border: 0.5px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    color: white;
+    font-size: 16px;
+    padding: 12px 14px;
+    outline: none;
+    font-family: inherit;
+    margin-bottom: 16px;
+    -webkit-appearance: none;
+  }
+  .sheet-input:focus { border-color: rgba(52,211,153,0.5); }
+  .sheet-input::placeholder { color: rgba(255,255,255,0.25); }
+  textarea.sheet-input { resize: none; height: 88px; line-height: 1.5; }
+
+  .sheet-btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    -webkit-tap-highlight-color: transparent;
+    margin-bottom: 10px;
+    font-family: inherit;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  .sheet-btn:active { opacity: 0.8; transform: scale(0.98); }
+  .btn-green  { background: #34d399; color: #0a2018; }
+  .btn-ghost  { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
+  .btn-danger { background: rgba(248,113,113,0.2); color: #f87171; }
+  .btn-last   { margin-bottom: 0; }
+</style>
+</head>
+<body>
+
+<div id="map-container">
+  <div id="map-wrapper">
+    <img id="trail-map" src="trail_map.png" alt="Jacksonville Arboretum Trail Map" draggable="false">
+    <canvas id="gps-layer"></canvas>
+    <div id="landmark-layer"></div>
+  </div>
+</div>
+
+<div id="ui-overlay">
+  <div id="top-bar">
+    <h1>🌿 Jacksonville Arboretum</h1>
+    <p id="landmark-count">Trail Map</p>
+  </div>
+  <div id="status-pill">
+    <div id="status-dot" class="searching"></div>
+    <span id="status-text">Getting location…</span>
+  </div>
+  <div id="offmap-banner">⚠ You may be outside the park</div>
+
+  <div id="bottom-controls">
+    <div class="zoom-group">
+      <button class="ctrl-btn" onclick="zoom(1.3)" aria-label="Zoom in">+</button>
+      <button class="ctrl-btn" onclick="zoom(0.77)" aria-label="Zoom out">−</button>
+    </div>
+    <button class="ctrl-btn" id="btn-locate" onclick="centerOnUser()" aria-label="Find my location">⦿</button>
+    <div class="zoom-group">
+      <button class="ctrl-btn" id="btn-add-landmark" onclick="startAddLandmark()" aria-label="Add landmark">📍</button>
+      <button class="ctrl-btn" onclick="fitMap()" aria-label="Fit map">⊡</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD LANDMARK SHEET -->
+<div class="sheet-backdrop" id="add-sheet" onclick="closeAdd(event)">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">New Landmark</div>
+    <div class="sheet-sub" id="add-coords-sub">Dropping pin at your location</div>
+
+    <div class="sheet-label">Choose an emoji</div>
+    <div class="emoji-grid" id="emoji-grid"></div>
+
+    <div class="sheet-label">Name</div>
+    <input class="sheet-input" id="add-name" type="text" placeholder="e.g. Siblings, Fern Forest…" maxlength="40">
+
+    <div class="sheet-label">Notes (optional)</div>
+    <textarea class="sheet-input" id="add-notes" placeholder="Describe what makes this special…"></textarea>
+
+    <button class="sheet-btn btn-green" onclick="saveLandmark()">Save Landmark</button>
+    <button class="sheet-btn btn-ghost btn-last" onclick="closeAdd()">Cancel</button>
+  </div>
+</div>
+
+<!-- VIEW / EDIT LANDMARK SHEET -->
+<div class="sheet-backdrop" id="view-sheet" onclick="closeView(event)">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+      <span id="view-emoji" style="font-size:30px;"></span>
+      <div>
+        <div class="sheet-title" id="view-name"></div>
+        <div class="sheet-sub" style="margin-bottom:0;" id="view-coords"></div>
+      </div>
+    </div>
+
+    <div style="margin: 16px 0;">
+      <div class="sheet-label">Notes</div>
+      <textarea class="sheet-input" id="view-notes" placeholder="Add notes about this spot…"></textarea>
+    </div>
+
+    <button class="sheet-btn btn-green" onclick="updateLandmark()">Save Notes</button>
+    <button class="sheet-btn btn-danger btn-last" onclick="deleteLandmark()">Delete Landmark</button>
+  </div>
+</div>
+
+<script>
+// ─── MAP CALIBRATION ─────────────────────────────────────────────────────────
+const MAP_BOUNDS = {
+  north: 30.3535,
+  south: 30.3355,
+  west:  -81.5440,
+  east:  -81.5330
+};
+const IMG_W = 2048;
+const IMG_H = 4768;
+
+function gpsToPixel(lat, lng) {
+  return {
+    x: ((lng - MAP_BOUNDS.west)  / (MAP_BOUNDS.east  - MAP_BOUNDS.west))  * IMG_W,
+    y: ((MAP_BOUNDS.north - lat) / (MAP_BOUNDS.north - MAP_BOUNDS.south)) * IMG_H
+  };
+}
+function isOnMap(lat, lng) {
+  return lat >= MAP_BOUNDS.south && lat <= MAP_BOUNDS.north &&
+         lng >= MAP_BOUNDS.west  && lng <= MAP_BOUNDS.east;
+}
+
+// ─── PAN / ZOOM ───────────────────────────────────────────────────────────────
+let scale = 1, panX = 0, panY = 0;
+const MIN_SCALE = 0.15, MAX_SCALE = 4.0;
+const container = document.getElementById('map-container');
+const wrapper   = document.getElementById('map-wrapper');
+const canvas    = document.getElementById('gps-layer');
+const ctx       = canvas.getContext('2d');
+const img       = document.getElementById('trail-map');
+
+function applyTransform() {
+  wrapper.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+}
+function fitMap() {
+  const vw = window.innerWidth, vh = window.innerHeight;
+  scale = Math.min(vw / IMG_W, vh / IMG_H) * 0.97;
+  panX  = (vw - IMG_W * scale) / 2;
+  panY  = (vh - IMG_H * scale) / 2;
+  applyTransform();
+}
+function zoom(f) {
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * f));
+  panX = cx - (cx - panX) * (ns / scale);
+  panY = cy - (cy - panY) * (ns / scale);
+  scale = ns; applyTransform();
+}
+function zoomToPoint(cx, cy, f) {
+  const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * f));
+  panX = cx - (cx - panX) * (ns / scale);
+  panY = cy - (cy - panY) * (ns / scale);
+  scale = ns; applyTransform();
+}
+
+// Touch / mouse
+let isDragging = false, lastX = 0, lastY = 0;
+let lastTouchDist = 0, lastTouchMidX = 0, lastTouchMidY = 0;
+
+function touchDist(t) { return Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY); }
+function touchMid(t)  { return { x:(t[0].clientX+t[1].clientX)/2, y:(t[0].clientY+t[1].clientY)/2 }; }
+
+container.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) { isDragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; }
+  else if (e.touches.length === 2) {
+    isDragging=false;
+    lastTouchDist=touchDist(e.touches);
+    const m=touchMid(e.touches); lastTouchMidX=m.x; lastTouchMidY=m.y;
+  }
+  e.preventDefault();
+}, { passive:false });
+
+container.addEventListener('touchmove', e => {
+  if (e.touches.length===1 && isDragging) {
+    panX+=e.touches[0].clientX-lastX; panY+=e.touches[0].clientY-lastY;
+    lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; applyTransform();
+  } else if (e.touches.length===2) {
+    const dist=touchDist(e.touches), mid=touchMid(e.touches);
+    zoomToPoint(mid.x, mid.y, dist/lastTouchDist);
+    panX+=mid.x-lastTouchMidX; panY+=mid.y-lastTouchMidY;
+    lastTouchDist=dist; lastTouchMidX=mid.x; lastTouchMidY=mid.y; applyTransform();
+  }
+  e.preventDefault();
+}, { passive:false });
+
+container.addEventListener('touchend',  e => { if (e.touches.length===0) isDragging=false; });
+container.addEventListener('mousedown', e => { isDragging=true; lastX=e.clientX; lastY=e.clientY; container.classList.add('dragging'); });
+document.addEventListener('mousemove',  e => { if (!isDragging) return; panX+=e.clientX-lastX; panY+=e.clientY-lastY; lastX=e.clientX; lastY=e.clientY; applyTransform(); });
+document.addEventListener('mouseup',   () => { isDragging=false; container.classList.remove('dragging'); });
+container.addEventListener('wheel', e => { e.preventDefault(); zoomToPoint(e.clientX, e.clientY, e.deltaY<0?1.12:0.89); }, { passive:false });
+container.addEventListener('touchstart', () => { autoCenter=false; }, { passive:true });
+container.addEventListener('mousedown',  () => { autoCenter=false; });
+
+// ─── GPS ──────────────────────────────────────────────────────────────────────
+let userLat=null, userLng=null, userAccuracy=null, watchId=null, autoCenter=true;
+const statusDot  = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+
+function setStatus(state, text) { statusDot.className=state; statusText.textContent=text; }
+
+function drawGPS() {
+  canvas.width=IMG_W; canvas.height=IMG_H;
+  ctx.clearRect(0,0,IMG_W,IMG_H);
+  if (userLat===null) return;
+  const {x,y} = gpsToPixel(userLat, userLng);
+  if (userAccuracy) {
+    const pxM = IMG_H / ((MAP_BOUNDS.north-MAP_BOUNDS.south)*111000);
+    ctx.beginPath(); ctx.arc(x,y,userAccuracy*pxM,0,Math.PI*2);
+    ctx.fillStyle='rgba(66,133,244,0.12)'; ctx.strokeStyle='rgba(66,133,244,0.35)';
+    ctx.lineWidth=3; ctx.fill(); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.arc(x,y,18,0,Math.PI*2);
+  ctx.fillStyle='white'; ctx.shadowColor='rgba(0,0,0,0.3)'; ctx.shadowBlur=12; ctx.fill(); ctx.shadowBlur=0;
+  ctx.beginPath(); ctx.arc(x,y,13,0,Math.PI*2);
+  ctx.fillStyle='#4285f4'; ctx.fill();
+}
+
+function centerOnUser() {
+  if (userLat===null) { startGPS(); return; }
+  autoCenter=true;
+  const {x,y}=gpsToPixel(userLat,userLng);
+  if (scale<0.5) scale=0.7;
+  panX=window.innerWidth/2-x*scale; panY=window.innerHeight/2-y*scale; applyTransform();
+  document.getElementById('btn-locate').classList.add('locating');
+  setTimeout(()=>document.getElementById('btn-locate').classList.remove('locating'),800);
+}
+
+function onPosition(pos) {
+  userLat=pos.coords.latitude; userLng=pos.coords.longitude; userAccuracy=pos.coords.accuracy;
+  drawGPS();
+  document.getElementById('offmap-banner').classList.toggle('visible', !isOnMap(userLat,userLng));
+  const acc = userAccuracy ? `±${Math.round(userAccuracy)}m` : '';
+  setStatus('found', `Location ${acc}`);
+  if (autoCenter) {
+    const {x,y}=gpsToPixel(userLat,userLng);
+    panX=window.innerWidth/2-x*scale; panY=window.innerHeight/2-y*scale; applyTransform();
+  }
+}
+function onError(err) {
+  const msgs={1:'Location blocked — check settings',2:'Signal lost'};
+  setStatus('error', msgs[err.code]||'Location unavailable');
+}
+function startGPS() {
+  if (!navigator.geolocation) { setStatus('error','GPS not supported'); return; }
+  setStatus('searching','Getting location…');
+  if (watchId) navigator.geolocation.clearWatch(watchId);
+  watchId=navigator.geolocation.watchPosition(onPosition, onError, {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+}
+
+// ─── LANDMARKS ────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'jax_arboretum_landmarks';
+let landmarks = [];
+let activeLandmarkId = null;
+
+const EMOJIS = ['🌳','🌲','🌴','🌿','🍃','🍄','🦎','🐦','🦋','🐾',
+                '🐢','🐿️','🪺','🎋','⭐','💚','🪨','💧','🌸','🌺',
+                '🍂','🌾','🪑','💬','🗑️','🚻','🔵','📍'];
+let selectedEmoji = '🌳';
+
+function loadLandmarks() {
+  try { landmarks = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]'); } catch(e) { landmarks=[]; }
+  renderAllLandmarks();
+  updateCount();
+}
+function saveLandmarks() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(landmarks));
+}
+
+function updateCount() {
+  const n = landmarks.length;
+  document.getElementById('landmark-count').textContent =
+    n === 0 ? 'Trail Map' : `${n} landmark${n===1?'':'s'}`;
+}
+
+function renderAllLandmarks() {
+  const layer = document.getElementById('landmark-layer');
+  layer.innerHTML = '';
+  landmarks.forEach(lm => renderPin(lm));
+}
+
+function renderPin(lm) {
+  const layer = document.getElementById('landmark-layer');
+  const {x,y} = gpsToPixel(lm.lat, lm.lng);
+  const pin = document.createElement('div');
+  pin.className = 'landmark-pin';
+  pin.id = `pin-${lm.id}`;
+  pin.style.left = `${x}px`;
+  pin.style.top  = `${y}px`;
+  pin.innerHTML = `
+    <div class="landmark-bubble">
+      <span style="font-size:16px">${lm.emoji}</span>
+      <span class="landmark-label">${lm.name}</span>
+    </div>
+    <div class="landmark-tail"></div>`;
+  pin.addEventListener('click', e => { e.stopPropagation(); openView(lm.id); });
+  pin.addEventListener('touchend', e => { e.stopPropagation(); });
+  layer.appendChild(pin);
+}
+
+// ── ADD SHEET ──
+function startAddLandmark() {
+  if (userLat === null) {
+    alert('Waiting for GPS fix. Try again in a moment!');
+    return;
+  }
+  selectedEmoji = '🌳';
+  buildEmojiGrid();
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-notes').value = '';
+  document.getElementById('add-coords-sub').textContent =
+    `${userLat.toFixed(5)}, ${userLng.toFixed(5)}`;
+  openSheet('add-sheet');
+}
+
+function buildEmojiGrid() {
+  const grid = document.getElementById('emoji-grid');
+  grid.innerHTML = '';
+  EMOJIS.forEach(em => {
+    const btn = document.createElement('button');
+    btn.className = 'emoji-btn' + (em===selectedEmoji?' selected':'');
+    btn.textContent = em;
+    btn.addEventListener('click', () => {
+      selectedEmoji = em;
+      grid.querySelectorAll('.emoji-btn').forEach(b=>b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+    grid.appendChild(btn);
+  });
+}
+
+function saveLandmark() {
+  const name = document.getElementById('add-name').value.trim();
+  if (!name) { document.getElementById('add-name').focus(); return; }
+  const lm = {
+    id:    Date.now().toString(),
+    emoji: selectedEmoji,
+    name,
+    notes: document.getElementById('add-notes').value.trim(),
+    lat:   userLat,
+    lng:   userLng
+  };
+  landmarks.push(lm);
+  saveLandmarks();
+  renderPin(lm);
+  updateCount();
+  closeAdd();
+}
+
+function closeAdd(e) {
+  if (e && e.target !== document.getElementById('add-sheet')) return;
+  closeSheet('add-sheet');
+}
+
+// ── VIEW SHEET ──
+function openView(id) {
+  activeLandmarkId = id;
+  const lm = landmarks.find(l=>l.id===id);
+  if (!lm) return;
+  document.getElementById('view-emoji').textContent = lm.emoji;
+  document.getElementById('view-name').textContent  = lm.name;
+  document.getElementById('view-coords').textContent = `${lm.lat.toFixed(5)}, ${lm.lng.toFixed(5)}`;
+  document.getElementById('view-notes').value = lm.notes || '';
+  openSheet('view-sheet');
+}
+
+function updateLandmark() {
+  const lm = landmarks.find(l=>l.id===activeLandmarkId);
+  if (!lm) return;
+  lm.notes = document.getElementById('view-notes').value.trim();
+  saveLandmarks();
+  closeView();
+}
+
+function deleteLandmark() {
+  if (!confirm('Delete this landmark?')) return;
+  landmarks = landmarks.filter(l=>l.id!==activeLandmarkId);
+  saveLandmarks();
+  const pin = document.getElementById(`pin-${activeLandmarkId}`);
+  if (pin) pin.remove();
+  updateCount();
+  closeView();
+}
+
+function closeView(e) {
+  if (e && e.target !== document.getElementById('view-sheet')) return;
+  closeSheet('view-sheet');
+}
+
+// ── SHEET HELPERS ──
+function openSheet(id) {
+  const el = document.getElementById(id);
+  el.style.display = 'flex';
+  requestAnimationFrame(() => el.classList.add('open'));
+}
+function closeSheet(id) {
+  const el = document.getElementById(id);
+  el.classList.remove('open');
+  setTimeout(() => { el.style.display='none'; }, 300);
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+img.onload = () => {
+  canvas.width=IMG_W; canvas.height=IMG_H;
+  fitMap(); startGPS(); loadLandmarks();
+};
+if (img.complete) {
+  canvas.width=IMG_W; canvas.height=IMG_H;
+  fitMap(); startGPS(); loadLandmarks();
+}
+window.addEventListener('resize', fitMap);
+
+// Close sheets on backdrop tap
+document.getElementById('add-sheet').style.display='none';
+document.getElementById('view-sheet').style.display='none';
+</script>
+</body>
+</html>
