@@ -332,8 +332,52 @@
     <button class="ctrl-btn" id="btn-locate" onclick="centerOnUser()" aria-label="Find my location">⦿</button>
     <div class="zoom-group">
       <button class="ctrl-btn" id="btn-add-landmark" onclick="startAddLandmark()" aria-label="Add landmark">📍</button>
-      <button class="ctrl-btn" onclick="fitMap()" aria-label="Fit map">⊡</button>
+      <button class="ctrl-btn" onclick="openSheet('menu-sheet')" aria-label="Menu">☰</button>
     </div>
+  </div>
+</div>
+
+<!-- MENU SHEET -->
+<div class="sheet-backdrop" id="menu-sheet" onclick="closeSheet('menu-sheet')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Menu</div>
+    <div class="sheet-sub" style="margin-bottom:20px;">Jacksonville Arboretum Trail Map</div>
+
+    <button class="sheet-btn btn-ghost" onclick="closeSheet('menu-sheet');fitMap()">⊡ &nbsp;Fit map to screen</button>
+    <button class="sheet-btn btn-ghost" onclick="closeSheet('menu-sheet');openExportSheet()">📤 &nbsp;Export landmarks</button>
+    <button class="sheet-btn btn-ghost btn-last" onclick="closeSheet('menu-sheet');openSheet('import-sheet')">📥 &nbsp;Import landmarks</button>
+  </div>
+</div>
+
+<!-- EXPORT SHEET -->
+<div class="sheet-backdrop" id="export-sheet" onclick="closeSheet('export-sheet')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">📤 Export Landmarks</div>
+    <div class="sheet-sub">Save a backup of all your landmarks</div>
+
+    <div id="export-count" style="color:rgba(255,255,255,0.6);font-size:13px;margin-bottom:16px;"></div>
+
+    <button class="sheet-btn btn-green" onclick="doExport()">Save to Files / iCloud</button>
+    <button class="sheet-btn btn-ghost btn-last" onclick="closeSheet('export-sheet')">Cancel</button>
+  </div>
+</div>
+
+<!-- IMPORT SHEET -->
+<div class="sheet-backdrop" id="import-sheet" onclick="closeImport(event)">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">📥 Import Landmarks</div>
+    <div class="sheet-sub">Restore from a previously exported backup file</div>
+
+    <div style="background:rgba(255,255,255,0.05);border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:14px;margin-bottom:16px;font-size:13px;color:rgba(255,255,255,0.5);line-height:1.6;">
+      This will <span style="color:#f87171;font-weight:600;">merge</span> imported landmarks with your existing ones. Duplicates are skipped automatically.
+    </div>
+
+    <input type="file" id="import-file" accept=".json" style="display:none" onchange="doImport(event)">
+    <button class="sheet-btn btn-green" onclick="document.getElementById('import-file').click()">Choose backup file…</button>
+    <button class="sheet-btn btn-ghost btn-last" onclick="closeSheet('import-sheet')">Cancel</button>
   </div>
 </div>
 
@@ -362,20 +406,19 @@
 <div class="sheet-backdrop" id="view-sheet" onclick="closeView(event)">
   <div class="sheet">
     <div class="sheet-handle"></div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
-      <span id="view-emoji" style="font-size:30px;"></span>
-      <div>
-        <div class="sheet-title" id="view-name"></div>
-        <div class="sheet-sub" style="margin-bottom:0;" id="view-coords"></div>
-      </div>
-    </div>
+    <div class="sheet-title">Edit Landmark</div>
+    <div class="sheet-sub" id="view-coords"></div>
 
-    <div style="margin: 16px 0;">
-      <div class="sheet-label">Notes</div>
-      <textarea class="sheet-input" id="view-notes" placeholder="Add notes about this spot…"></textarea>
-    </div>
+    <div class="sheet-label">Emoji</div>
+    <div class="emoji-grid" id="view-emoji-grid"></div>
 
-    <button class="sheet-btn btn-green" onclick="updateLandmark()">Save Notes</button>
+    <div class="sheet-label">Name</div>
+    <input class="sheet-input" id="view-name" type="text" maxlength="40">
+
+    <div class="sheet-label">Notes (optional)</div>
+    <textarea class="sheet-input" id="view-notes" placeholder="Add notes about this spot…"></textarea>
+
+    <button class="sheet-btn btn-green" onclick="updateLandmark()">Save Changes</button>
     <button class="sheet-btn btn-danger btn-last" onclick="deleteLandmark()">Delete Landmark</button>
   </div>
 </div>
@@ -534,9 +577,15 @@ const STORAGE_KEY = 'jax_arboretum_landmarks';
 let landmarks = [];
 let activeLandmarkId = null;
 
-const EMOJIS = ['🌳','🌲','🌴','🌿','🍃','🍄','🦎','🐦','🦋','🐾',
-                '🐢','🐿️','🪺','🎋','⭐','💚','🪨','💧','🌸','🌺',
-                '🍂','🌾','🪑','💬','🗑️','🚻','🔵','📍'];
+const EMOJI_CATEGORIES = [
+  { label: '🌳 Trees',    emojis: ['🌳','🌲','🌴','🎋'] },
+  { label: '🌿 Plants',   emojis: ['🌿','🌾','🍄','🍓','🍇'] },
+  { label: '🌸 Flowers',  emojis: ['💐','🏵','🌹','🌺','🌻','🌼','🌷'] },
+  { label: '🗺️ Terrain',  emojis: ['🪨','🪵','💦','🌊','⛰️'] },
+  { label: '🐾 Animals',  emojis: ['🦋','🐦','🐢','🦎','🐿️','🪺','🐾'] },
+  { label: '📍 Amenities',emojis: ['📍','🅿️','🚻','🧺','🗑️','💧','⛺','⭐','💚','💬'] }
+];
+const EMOJIS = EMOJI_CATEGORIES.flatMap(c => c.emojis);
 let selectedEmoji = '🌳';
 
 function loadLandmarks() {
@@ -595,18 +644,32 @@ function startAddLandmark() {
 }
 
 function buildEmojiGrid() {
-  const grid = document.getElementById('emoji-grid');
+  buildEmojiGridInto('emoji-grid', () => selectedEmoji, (em) => { selectedEmoji = em; });
+}
+
+function buildEmojiGridInto(gridId, getSelected, setSelected) {
+  const grid = document.getElementById(gridId);
   grid.innerHTML = '';
-  EMOJIS.forEach(em => {
-    const btn = document.createElement('button');
-    btn.className = 'emoji-btn' + (em===selectedEmoji?' selected':'');
-    btn.textContent = em;
-    btn.addEventListener('click', () => {
-      selectedEmoji = em;
-      grid.querySelectorAll('.emoji-btn').forEach(b=>b.classList.remove('selected'));
-      btn.classList.add('selected');
+  // Temporarily widen grid to full width with 7 cols
+  grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
+  EMOJI_CATEGORIES.forEach(cat => {
+    // Category label spanning full row
+    const label = document.createElement('div');
+    label.style.cssText = 'grid-column:1/-1;font-size:11px;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.8px;padding:8px 0 4px;';
+    label.textContent = cat.label;
+    grid.appendChild(label);
+    // Emoji buttons
+    cat.emojis.forEach(em => {
+      const btn = document.createElement('button');
+      btn.className = 'emoji-btn' + (em===getSelected()?' selected':'');
+      btn.textContent = em;
+      btn.addEventListener('click', () => {
+        setSelected(em);
+        grid.querySelectorAll('.emoji-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+      });
+      grid.appendChild(btn);
     });
-    grid.appendChild(btn);
   });
 }
 
@@ -638,18 +701,35 @@ function openView(id) {
   activeLandmarkId = id;
   const lm = landmarks.find(l=>l.id===id);
   if (!lm) return;
-  document.getElementById('view-emoji').textContent = lm.emoji;
-  document.getElementById('view-name').textContent  = lm.name;
+  selectedViewEmoji = lm.emoji;
+  buildViewEmojiGrid();
+  document.getElementById('view-name').value  = lm.name;
   document.getElementById('view-coords').textContent = `${lm.lat.toFixed(5)}, ${lm.lng.toFixed(5)}`;
   document.getElementById('view-notes').value = lm.notes || '';
   openSheet('view-sheet');
 }
 
+let selectedViewEmoji = '🌳';
+
+function buildViewEmojiGrid() {
+  buildEmojiGridInto('view-emoji-grid', () => selectedViewEmoji, (em) => { selectedViewEmoji = em; });
+}
+
 function updateLandmark() {
   const lm = landmarks.find(l=>l.id===activeLandmarkId);
   if (!lm) return;
+  const newName = document.getElementById('view-name').value.trim();
+  if (!newName) { document.getElementById('view-name').focus(); return; }
+  lm.emoji = selectedViewEmoji;
+  lm.name  = newName;
   lm.notes = document.getElementById('view-notes').value.trim();
   saveLandmarks();
+  // Update pin on map
+  const pin = document.getElementById(`pin-${lm.id}`);
+  if (pin) {
+    pin.querySelector('.landmark-bubble').innerHTML =
+      `<span style="font-size:16px">${lm.emoji}</span><span class="landmark-label">${lm.name}</span>`;
+  }
   closeView();
 }
 
@@ -680,6 +760,78 @@ function closeSheet(id) {
   setTimeout(() => { el.style.display='none'; }, 300);
 }
 
+// ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
+function doExport() {
+  if (landmarks.length === 0) {
+    alert('No landmarks to export yet!');
+    return;
+  }
+  const data = {
+    app: 'Jacksonville Arboretum Trail Map',
+    exported: new Date().toISOString(),
+    version: 1,
+    landmarks
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const date = new Date().toISOString().slice(0,10);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `arboretum-landmarks-${date}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  closeSheet('export-sheet');
+}
+
+function openExportSheet() {
+  const n = landmarks.length;
+  document.getElementById('export-count').textContent =
+    n === 0 ? 'You have no landmarks saved yet.'
+            : `You have ${n} landmark${n===1?'':'s'} saved.`;
+  openSheet('export-sheet');
+}
+
+function doImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.landmarks || !Array.isArray(data.landmarks)) throw new Error('Invalid file');
+      let added = 0;
+      const existingIds = new Set(landmarks.map(l => l.id));
+      data.landmarks.forEach(lm => {
+        if (!existingIds.has(lm.id) && lm.lat && lm.lng && lm.name) {
+          landmarks.push(lm);
+          renderPin(lm);
+          added++;
+        }
+      });
+      saveLandmarks();
+      updateCount();
+      closeSheet('import-sheet');
+      alert(`✅ Imported ${added} landmark${added===1?'':'s'}!${added < data.landmarks.length ? `\n(${data.landmarks.length - added} already existed and were skipped)` : ''}`);
+    } catch(err) {
+      alert('❌ That file doesn\'t look like a valid landmarks backup.');
+    }
+    // Reset file input so same file can be re-imported if needed
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function closeImport(e) {
+  if (e && e.target !== document.getElementById('import-sheet')) return;
+  closeSheet('import-sheet');
+}
+
+// ─── SERVICE WORKER (offline support) ────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(err => console.log('SW error:', err));
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 img.onload = () => {
   canvas.width=IMG_W; canvas.height=IMG_H;
@@ -694,6 +846,9 @@ window.addEventListener('resize', fitMap);
 // Close sheets on backdrop tap
 document.getElementById('add-sheet').style.display='none';
 document.getElementById('view-sheet').style.display='none';
+document.getElementById('menu-sheet').style.display='none';
+document.getElementById('export-sheet').style.display='none';
+document.getElementById('import-sheet').style.display='none';
 </script>
 </body>
 </html>
