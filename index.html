@@ -301,6 +301,21 @@
   .btn-ghost  { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
   .btn-danger { background: rgba(248,113,113,0.2); color: #f87171; }
   .btn-last   { margin-bottom: 0; }
+
+  .export-option {
+    background: rgba(255,255,255,0.07);
+    border: 1.5px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .export-option:active { background: rgba(255,255,255,0.14); }
+  .export-option.selected {
+    border-color: #34d399;
+    background: rgba(52,211,153,0.1);
+  }
 </style>
 </head>
 <body>
@@ -355,11 +370,28 @@
   <div class="sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-title">📤 Export Landmarks</div>
-    <div class="sheet-sub">Save a backup of all your landmarks</div>
+    <div class="sheet-sub">Save a backup or share with other apps</div>
 
     <div id="export-count" style="color:rgba(255,255,255,0.6);font-size:13px;margin-bottom:16px;"></div>
 
-    <button class="sheet-btn btn-green" onclick="doExport()">Save to Files / iCloud</button>
+    <div class="sheet-label">Choose format</div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;">
+      <div class="export-option" onclick="selectExportFormat('json')" id="fmt-json">
+        <div style="font-weight:600;font-size:14px;color:white;">📋 Backup (JSON)</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px;">For restoring into this app. Best for backups.</div>
+      </div>
+      <div class="export-option" onclick="selectExportFormat('gpx')" id="fmt-gpx">
+        <div style="font-weight:600;font-size:14px;color:white;">🗺️ GPX</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px;">Works with Google Earth, AllTrails, Gaia GPS, and most GPS apps.</div>
+      </div>
+      <div class="export-option" onclick="selectExportFormat('kml')" id="fmt-kml">
+        <div style="font-weight:600;font-size:14px;color:white;">🌐 KML</div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:2px;">Works with Google Maps and Google Earth. Great for map overlays.</div>
+      </div>
+    </div>
+
+    <button class="sheet-btn btn-green" onclick="doExport()">Export</button>
     <button class="sheet-btn btn-ghost btn-last" onclick="closeSheet('export-sheet')">Cancel</button>
   </div>
 </div>
@@ -761,35 +793,104 @@ function closeSheet(id) {
 }
 
 // ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
-function doExport() {
+let exportFormat = 'json';
+
+function selectExportFormat(fmt) {
+  exportFormat = fmt;
+  ['json','gpx','kml'].forEach(f => {
+    document.getElementById(`fmt-${f}`).classList.toggle('selected', f === fmt);
+  });
+}
+
+function openExportSheet() {
   if (landmarks.length === 0) {
     alert('No landmarks to export yet!');
     return;
   }
+  const n = landmarks.length;
+  document.getElementById('export-count').textContent =
+    `${n} landmark${n===1?'':'s'} will be exported.`;
+  exportFormat = 'json';
+  ['json','gpx','kml'].forEach(f => {
+    document.getElementById(`fmt-${f}`).classList.toggle('selected', f === 'json');
+  });
+  openSheet('export-sheet');
+}
+
+function doExport() {
+  if (exportFormat === 'json') exportJSON();
+  else if (exportFormat === 'gpx') exportGPX();
+  else if (exportFormat === 'kml') exportKML();
+  closeSheet('export-sheet');
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportJSON() {
   const data = {
     app: 'Jacksonville Arboretum Trail Map',
     exported: new Date().toISOString(),
     version: 1,
     landmarks
   };
-  const json = JSON.stringify(data, null, 2);
-  const blob = new Blob([json], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
   const date = new Date().toISOString().slice(0,10);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `arboretum-landmarks-${date}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  closeSheet('export-sheet');
+  downloadFile(JSON.stringify(data, null, 2), `arboretum-landmarks-${date}.json`, 'application/json');
 }
 
-function openExportSheet() {
-  const n = landmarks.length;
-  document.getElementById('export-count').textContent =
-    n === 0 ? 'You have no landmarks saved yet.'
-            : `You have ${n} landmark${n===1?'':'s'} saved.`;
-  openSheet('export-sheet');
+function exportGPX() {
+  const date = new Date().toISOString().slice(0,10);
+  const wpts = landmarks.map(lm => `  <wpt lat="${lm.lat}" lon="${lm.lng}">
+    <name>${escXML(lm.emoji + ' ' + lm.name)}</name>
+    <desc>${escXML(lm.notes || '')}</desc>
+    <sym>Flag</sym>
+  </wpt>`).join('\n');
+
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Jacksonville Arboretum Trail Map"
+  xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Jacksonville Arboretum Landmarks</name>
+    <time>${new Date().toISOString()}</time>
+  </metadata>
+${wpts}
+</gpx>`;
+  downloadFile(gpx, `arboretum-landmarks-${date}.gpx`, 'application/gpx+xml');
+}
+
+function exportKML() {
+  const date = new Date().toISOString().slice(0,10);
+  const placemarks = landmarks.map(lm => `  <Placemark>
+    <name>${escXML(lm.emoji + ' ' + lm.name)}</name>
+    <description>${escXML(lm.notes || '')}</description>
+    <Point><coordinates>${lm.lng},${lm.lat},0</coordinates></Point>
+  </Placemark>`).join('\n');
+
+  const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Jacksonville Arboretum Landmarks</name>
+    <description>Exported ${date}</description>
+${placemarks}
+  </Document>
+</kml>`;
+  downloadFile(kml, `arboretum-landmarks-${date}.kml`, 'application/vnd.google-earth.kml+xml');
+}
+
+function escXML(str) {
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&apos;');
 }
 
 function doImport(event) {
